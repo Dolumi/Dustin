@@ -1,0 +1,144 @@
+#include <WiFi.h>
+#include <HTTPClient.h>
+#include <ArduinoJson.h>
+#include <SoftwareSerial.h>
+#include <DFRobotDFPlayerMini.h>
+#include <driver/i2s.h>
+#include "Base64.h"  // Librairie pour encoder en Base64
+
+// 🔌 CONFIGURATION DU WIFI
+const char* ssid = "Ryuk_Etage";
+const char* password = "ChampRepro51";
+const char* googleApiKey = "AIzaSyD2o6ruUz4MGgJVvoUYjJOZ0MHvZRdXiC8"; // 🔑 Clé API Google
+
+// 🎵 DFPlayer Mini
+SoftwareSerial mySerial(16, 17); // RX, TX
+DFRobotDFPlayerMini myDFPlayer;
+
+// 🎤 Configuration du micro I2S
+#define I2S_WS 15
+#define I2S_SD 32
+#define I2S_SCK 14
+
+void setup() {
+    Serial.begin(115200);
+    mySerial.begin(9600);
+
+    // Connexion WiFi
+    WiFi.begin(ssid, password);
+    Serial.print("Connexion Wi-Fi...");
+    while (WiFi.status() != WL_CONNECTED) {
+        delay(1000);
+        Serial.print(".");
+    }
+    Serial.println("\nConnecté au Wi-Fi !");
+
+    // Initialisation du DFPlayer Mini
+    if (!myDFPlayer.begin(mySerial)) {
+        Serial.println("Erreur DFPlayer !");
+        while (true);
+    }
+    myDFPlayer.volume(20);  // Volume (0-30)
+
+    // Initialisation du micro I2S
+    setupI2S();
+}
+
+// 📌 Fonction pour envoyer l'audio à Google STT
+void sendAudioToGoogle(String base64Audio) {
+    if (WiFi.status() == WL_CONNECTED) {
+        HTTPClient http;
+        http.begin("https://speech.googleapis.com/v1/speech:recognize?key=" + String(googleApiKey));
+        http.addHeader("Content-Type", "application/json");
+
+        String jsonPayload = R"({
+            "config": {
+                "encoding": "LINEAR16",
+                "sampleRateHertz": 16000,
+                "languageCode": "fr-FR"
+            },
+            "audio": {
+                "content": ")" + base64Audio + R"("
+            }
+        })";
+
+        int httpResponseCode = http.POST(jsonPayload);
+        if (httpResponseCode > 0) {
+            String response = http.getString();
+            Serial.println("Réponse de Google : " + response);
+            processResponse(response);
+        } else {
+            Serial.println("Erreur de requête : " + String(httpResponseCode));
+        }
+        http.end();
+    }
+}
+
+// 📌 Analyse la réponse JSON de Google
+void processResponse(String response) {
+    DynamicJsonDocument doc(1024);
+    deserializeJson(doc, response);
+
+    if (doc.containsKey("results")) {
+        const char* transcript = doc["results"][0]["alternatives"][0]["transcript"];
+        Serial.print("Texte reconnu : ");
+        Serial.println(transcript);
+
+        // Vérifie si le mot "salut" est détecté
+        if (String(transcript).indexOf("salut") != -1) {
+            Serial.println("Commande reconnue : SALUT !");
+            playAudio(1); // Joue la piste 1 (0001.mp3)
+        }
+    }
+}
+
+// 🎵 Joue un fichier audio avec DFPlayer Mini
+void playAudio(int track) {
+    Serial.print("Lecture de l’audio : Piste ");
+    Serial.println(track);
+    myDFPlayer.play(track);
+}
+
+// 🎤 Configuration du micro I2S
+void setupI2S() {
+    i2s_config_t i2s_config = {
+        .mode = (i2s_mode_t)(I2S_MODE_MASTER | I2S_MODE_RX),
+        .sample_rate = 16000,
+        .bits_per_sample = I2S_BITS_PER_SAMPLE_16BIT,
+        .channel_format = I2S_CHANNEL_FMT_ONLY_LEFT,
+        .communication_format = I2S_COMM_FORMAT_I2S_MSB,
+        .intr_alloc_flags = 0,
+        .dma_buf_count = 8,
+        .dma_buf_len = 1024,
+        .use_apll = false
+    };
+
+    i2s_pin_config_t pin_config = {
+        .bck_io_num = I2S_SCK,
+        .ws_io_num = I2S_WS,
+        .data_out_num = -1,
+        .data_in_num = I2S_SD
+    };
+
+    i2s_driver_install(I2S_NUM_0, &i2s_config, 0, NULL);
+    i2s_set_pin(I2S_NUM_0, &pin_config);
+}
+
+// 📌 Capture l’audio du micro et l'envoie à Google
+void recordAudio() {
+    uint8_t audioBuffer[16000]; // 1 seconde d'audio (16KHz)
+    size_t bytesRead;
+    i2s_read(I2S_NUM_0, audioBuffer, sizeof(audioBuffer), &bytesRead, portMAX_DELAY);
+
+    // Conversion en Base64
+    String base64Audio = base64::encode(audioBuffer, bytesRead);
+    Serial.println("Audio encodé en Base64, envoi à Google...");
+
+    sendAudioToGoogle(base64Audio);
+}
+
+void loop() {
+    Serial.println("Enregistrement...");
+    recordAudio();
+    delay(5000); // Attend 5s avant le prochain enregistrement
+}
