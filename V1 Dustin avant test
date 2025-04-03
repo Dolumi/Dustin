@@ -8,8 +8,8 @@
 
 // 🔌 CONFIGURATION DU WIFI
 const char* ssid = "Ryuk_Etage";
-const char* password = "ChampRepro51";
-const char* googleApiKey = "AIzaSyD2o6ruUz4MGgJVvoUYjJOZ0MHvZRdXiC8"; // 🔑 Clé API Google
+const char* password = "passwifi";
+const char* googleApiKey = "cleapi"; // 🔑 Clé API Google
 
 // 🎵 DFPlayer Mini
 SoftwareSerial mySerial(16, 17); // RX, TX
